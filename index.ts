@@ -99,13 +99,10 @@ function generateTestCases<T extends _C_indicator>(indicator: INDICATOR<T>): num
   let discovery: RESULT[] = [];
   let cases: number[][] = [];
   cases = generateArgCases(0, indicator.args, []);
-  //console.log(cases)
   return cases;
 }
 
 var candles = new CandleManager("BTCUSDT");
-
-
 
 function analyzePatterns(frame: TIMEFRAMES, start: number, end: number): Promise<any[]> {
   return new Promise((resolve, reject) => {
@@ -153,15 +150,34 @@ function analyzePatterns(frame: TIMEFRAMES, start: number, end: number): Promise
 async function main() {
   await candles.loadCandles(TIMEFRAMES["15m"], 1654041600000, 1655074800002);
   
+  let start = 1654819200410 - 1654819200410%TIMEFRAMES["15m"];
+  let end = 1655074800002 - 1655074800002%TIMEFRAMES["15m"];
+  let count = (end - start)/TIMEFRAMES["15m"];
+
   let tests: number[][] = generateTestCases(INDICATORS.RSI);
   let ind = new INDICATORS.RSI.c(candles.getCandles);
   let [peak, trough] = await analyzePatterns(TIMEFRAMES["15m"], 1654819200410, 1655074800002);
   ind.reset(1654819200410, [TIMEFRAMES["15m"], ...tests[0]]);
-  ind.computeNext(false);
-  ind.computeNext(false);
-  ind.computeNext(false);
-  ind.computeNext(false);
-  ind.computeNext(false);
+
+  let vals_l: number[] = [];
+  let vals_s: number[] = [];
+
+  for (var i = start; i < end; i += TIMEFRAMES["15m"]) {
+    if (i in peak) {
+      let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+      candle.close = candle.high;
+      vals_s.push(ind.computeNext(true, candle));
+    } else if (i in trough) {
+      let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+      candle.close = candle.low;
+      vals_l.push(ind.computeNext(true, candle));
+    }
+    ind.computeNext(false);
+  }
+  //console.log(vals_l, vals_s)
+
+  //console.log(ind.getCache()) Debug RSI Values [in case I mess with the math]
+
   for (const test of tests) {
     //ind.reset(1654819200410, [TIMEFRAMES["15m"], ...test]);
 

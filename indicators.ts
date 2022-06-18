@@ -5,9 +5,10 @@ export interface _C_indicator {
   compute: (start?: number, end?: number) => any;
   computeNext: (t: boolean, d?: KLine) => number;
   reset: (start: number, a: number[]) => void;
+  getCache: () => number[][];
 }
 
-export class ma implements _C_indicator {
+/*export class ma implements _C_indicator {
   constructor(getKline: KLine) {
 
   }
@@ -22,9 +23,11 @@ export class ma implements _C_indicator {
 
     return 0;
   }
-}
 
-export class rsi {
+  getCache() {}
+}*/
+
+export class rsi implements _C_indicator {
   private length: number;
   private MA_U: number = 0;
   private MA_D: number = 0;
@@ -53,10 +56,11 @@ export class rsi {
       MA_U = (MA_U*(this.length-1)+(data.close > data.open ? data.close/data.open - 1 : 0))/this.length;
       MA_D = (MA_D*(this.length-1)+(data.close < data.open ? 1 - data.close/data.open : 0))/this.length;
     } else {
-      this.time += this.frame;
+      if (this.cache.length) this.time += this.frame;
       let result = this.getKline(this.frame, this.time, this.time)[0];
       MA_U = (MA_U*(this.length-1)+(result.close > result.open ? result.close/result.open - 1 : 0))/this.length;
       MA_D = (MA_D*(this.length-1)+(result.close < result.open ? 1 - result.close/result.open : 0))/this.length;
+      if (theory && this.cache.length > 1) this.time -= this.frame;
     }
     let rsi = MA_D == 0 ? 0 : 100 - 100/(1+MA_U/MA_D);
     if (!theory) {
@@ -68,7 +72,7 @@ export class rsi {
   }
 
   reset(start: number, args: number[]) {
-    const pre = 100;
+    const pre = 50;
     this.setParameters(args);
     this.time = start - start%this.frame;
     start = start - (pre+this.length)*this.frame;
@@ -79,11 +83,13 @@ export class rsi {
     }
     this.MA_U /= this.length;
     this.MA_D /= this.length;
-    for (var i = this.length; i <= pre + this.length; i++) {
+    for (var i = this.length; i < pre + this.length; i++) {
       this.MA_U = (this.MA_U*(this.length-1)+(result[i].close > result[i].open ? result[i].close/result[i].open - 1 : 0))/this.length;
       this.MA_D = (this.MA_D*(this.length-1)+(result[i].close < result[i].open ? 1 - result[i].close/result[i].open : 0))/this.length;
     }
   }
+
+  getCache = () => this.cache;
 }
 
 
