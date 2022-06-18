@@ -147,6 +147,23 @@ function analyzePatterns(frame: TIMEFRAMES, start: number, end: number): Promise
 
 }
 
+function eliminateOutliers(data: number[]): number[] {
+  data.sort((n1,n2) => n1 - n2);
+  let q1_p = (data.length+1)*0.25;
+  let k1 = Math.floor(q1_p);
+  const Q1 = data[k1-1]+(q1_p - k1)*(data[k1]-data[k1-1]);
+  let q3_p = (data.length+1)*0.75;
+  let k3 = Math.floor(q1_p);
+  const Q3 = data[k3-1]+(q3_p - k3)*(data[k3]-data[k3-1]);
+
+  let r_dat: number[] = [];
+  for (const d of data)
+    if (d > Q1-1.5*(Q3-Q1) && d < Q3+1.5*(Q3-Q1)) r_dat.push(d);
+    else console.log(d);
+  return r_dat;
+}
+
+
 async function main() {
   await candles.loadCandles(TIMEFRAMES["15m"], 1654041600000, 1655074800002);
   
@@ -174,6 +191,14 @@ async function main() {
     }
     ind.computeNext(false);
   }
+
+  let vals_l_clean = eliminateOutliers(vals_l);
+  let vals_s_clean = eliminateOutliers(vals_s);
+  const precision_l = vals_l_clean.length / vals_l.length;
+  const precision_s = vals_s_clean.length / vals_s.length;
+
+  console.log(precision_l*100, precision_s*100);
+  
   //console.log(vals_l, vals_s)
 
   //console.log(ind.getCache()) Debug RSI Values [in case I mess with the math]
