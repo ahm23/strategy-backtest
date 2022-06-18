@@ -32,7 +32,9 @@ export class rsi {
   private frame: TIMEFRAMES;
   private time: number = new Date().getTime();
 
-  constructor(public getKline: (frame: TIMEFRAMES, start: number, end: number) => KLine, args?: number[]) {
+  private cache: number[][] = [];
+
+  constructor(public getKline: (frame: TIMEFRAMES, start: number, end: number) => KLine[], args?: number[]) {
     if (args) this.setParameters(args);
   }
 
@@ -41,21 +43,34 @@ export class rsi {
     this.length = args[1];
   }
 
-  compute(start?: number, end?: number) {
+  compute(end?: number) {
     
   }
 
   computeNext(theory: boolean, data?: KLine) {
+    let MA_U = this.MA_U, MA_D = this.MA_D;
     if (data) {
-
+      MA_U = (MA_U*(this.length-1)+(data.close > data.open ? data.close/data.open - 1 : 0))/this.length;
+      MA_D = (MA_D*(this.length-1)+(data.close < data.open ? 1 - data.close/data.open : 0))/this.length;
+    } else {
+      this.time += this.frame;
+      let result = this.getKline(this.frame, this.time, this.time)[0];
+      MA_U = (MA_U*(this.length-1)+(result.close > result.open ? result.close/result.open - 1 : 0))/this.length;
+      MA_D = (MA_D*(this.length-1)+(result.close < result.open ? 1 - result.close/result.open : 0))/this.length;
     }
-    return 0;
+    let rsi = MA_D == 0 ? 0 : 100 - 100/(1+MA_U/MA_D);
+    if (!theory) {
+      this.MA_U = MA_U;
+      this.MA_D = MA_D;
+      this.cache.push([this.time, rsi]);
+    }
+    return rsi;
   }
 
   reset(start: number, args: number[]) {
-    const pre = 50;
-    this.time = start;
+    const pre = 100;
     this.setParameters(args);
+    this.time = start - start%this.frame;
     start = start - (pre+this.length)*this.frame;
     let result = this.getKline(this.frame, start, this.time);
     for (var i = 0; i < this.length; i++) {
@@ -64,7 +79,7 @@ export class rsi {
     }
     this.MA_U /= this.length;
     this.MA_D /= this.length;
-    for (var i = this.length; i < pre + this.length; i++) {
+    for (var i = this.length; i <= pre + this.length; i++) {
       this.MA_U = (this.MA_U*(this.length-1)+(result[i].close > result[i].open ? result[i].close/result[i].open - 1 : 0))/this.length;
       this.MA_D = (this.MA_D*(this.length-1)+(result[i].close < result[i].open ? 1 - result[i].close/result[i].open : 0))/this.length;
     }

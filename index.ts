@@ -21,7 +21,7 @@ const INDICATORS: INDICATOR_LIST = {
   RSI: {
     c: rsi,
     args: [
-      {type: _T_ARGS.num_p_nz, b_l: 3, b_u: 50}
+      {type: _T_ARGS.num_p_nz, b_l: 7, b_u: 50}
     ],
     compare: _T_COMPARE.value,
     max: 100,
@@ -62,8 +62,7 @@ class CandleManager {
     //console.log(this.candles)
     let collector: KLine[] = [];
     start -= start%frame; end -= end%frame;
-    for (var i = 0; i < (end - start)/frame; i++) {
-      console.log(start+i*frame)
+    for (var i = 0; i <= (end - start)/frame; i++) {
       if (this.candles[start+i*frame])
         collector.push(this.candles[start+i*frame]);
     }
@@ -100,7 +99,7 @@ function generateTestCases<T extends _C_indicator>(indicator: INDICATOR<T>): num
   let discovery: RESULT[] = [];
   let cases: number[][] = [];
   cases = generateArgCases(0, indicator.args, []);
-  console.log(cases)
+  //console.log(cases)
   return cases;
 }
 
@@ -152,12 +151,17 @@ function analyzePatterns(frame: TIMEFRAMES, start: number, end: number): Promise
 }
 
 async function main() {
-  await candles.loadCandles(TIMEFRAMES["15m"], 1654732800000, 1655074800002);
+  await candles.loadCandles(TIMEFRAMES["15m"], 1654041600000, 1655074800002);
   
   let tests: number[][] = generateTestCases(INDICATORS.RSI);
   let ind = new INDICATORS.RSI.c(candles.getCandles);
   let [peak, trough] = await analyzePatterns(TIMEFRAMES["15m"], 1654819200410, 1655074800002);
   ind.reset(1654819200410, [TIMEFRAMES["15m"], ...tests[0]]);
+  ind.computeNext(false);
+  ind.computeNext(false);
+  ind.computeNext(false);
+  ind.computeNext(false);
+  ind.computeNext(false);
   for (const test of tests) {
     //ind.reset(1654819200410, [TIMEFRAMES["15m"], ...test]);
 
