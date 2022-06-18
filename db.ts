@@ -17,7 +17,7 @@ conn.connect(function(err) {
 });
 
 export function queryDB(symbol: string, frame: TIMEFRAMES, start: number, end: number, cb?: (r: KLine[]) => void): Promise<KLine[]> {
-  const QUERY = `SELECT open_time, open, close
+  const QUERY = `SELECT *
   FROM data_kline 
   INNER JOIN link_pair_timeframe link ON data_kline.pnt = link.id_pnt 
   INNER JOIN root_pairs p ON link.pair = p.id_pair AND p.symbol="`+symbol+`" 
