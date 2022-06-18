@@ -21,7 +21,7 @@ const INDICATORS: INDICATOR_LIST = {
   RSI: {
     c: rsi,
     args: [
-      {type: _T_ARGS.num_p_nz, b_l: 1, b_u: 50}
+      {type: _T_ARGS.num_p_nz, b_l: 3, b_u: 50}
     ],
     compare: _T_COMPARE.value,
     max: 100,
@@ -55,14 +55,20 @@ class CandleManager {
     let raw: KLine[] = await queryDB(this.symbol, frame, start, end);
     for (const candle of raw) this.candles[candle.open_time] = candle;
     this.loading = false;
-    console.log(this.candles)
+    //console.log(this.candles)
   }
 
-  getCandles(start: number, end: number): KLine[] {
-
-    return [{} as KLine];
+  getCandles = (frame: TIMEFRAMES, start: number, end: number): KLine[] => {
+    //console.log(this.candles)
+    let collector: KLine[] = [];
+    start -= start%frame; end -= end%frame;
+    for (var i = 0; i < (end - start)/frame; i++) {
+      console.log(start+i*frame)
+      if (this.candles[start+i*frame])
+        collector.push(this.candles[start+i*frame]);
+    }
+    return collector;
   }
-
   isBusy() {
     return this.loading;
   }
@@ -90,58 +96,75 @@ function generateArgCases(index: number, args: ARG[], append: number[]): number[
 }
 
 
-function generateTestCases<T extends _C_indicator>(indicator: INDICATOR<T>) {
+function generateTestCases<T extends _C_indicator>(indicator: INDICATOR<T>): number[][] {
   let discovery: RESULT[] = [];
   let cases: number[][] = [];
   cases = generateArgCases(0, indicator.args, []);
   console.log(cases)
+  return cases;
 }
-
-generateTestCases(INDICATORS.SRSI);
-
-function analyzePatterns(frame: TIMEFRAMES, start: number, end: number) {
-  queryDB('BTCUSDT', frame, start, end, (result: KLine[]) => {
-    let l = 14;
-    var trend = result[l].close-result[0].close < 0 ? "Down" : "Up";
-    var lock: string | boolean = false;
-    var lock_end: number = 0;
-    var tmp;
-    let peaks = {}, troughs = {};
-    for (var i = 1; i < result.length - l; i++) {
-      if (!lock) {
-        if (trend === "Up" && result[i+l].close-result[i].close < 0) {
-          lock = "high";
-          lock_end = i+l;
-          tmp = result[i];
-          trend = "Down";
-          if (i > 3) i -= 3;
-        } else if (trend === "Down" && result[i+l].close-result[i].close > 0) {
-          lock = "low";
-          lock_end = i+l;
-          tmp = result[i];
-          trend = "Up";
-          if (i > 3) i -= 3;
-        }
-      } else {
-        if (i == lock_end) {
-          console.log( "["+(lock == "high" ? tmp.high : tmp.low)+"] " + (lock == "high" ? "Peak @ " : "Trough @ ") + new Date(tmp.open_time).toLocaleString());
-          lock == "high" ? peaks[new Date(tmp.open_time).getTime()] = parseFloat(tmp.high) : troughs[new Date(tmp.open_time).getTime()] = parseFloat(tmp.low);
-          lock = false;
-        } else if ((lock === "low" && result[i].low < tmp.low) || (lock === "high" && (result[i].close > tmp.close || (result[i].high > tmp.high && result[i].close < result[i].open)))) {
-          tmp = result[i];
-          if (i+2 >= lock_end)
-            lock_end++;
-        }
-      }
-      // slope 14, flip slope -> lock endpoint, regress until lowest close.
-    }
-    //console.log([peaks, troughs])
-  });
-}
-
-
 
 var candles = new CandleManager("BTCUSDT");
+
+
+
+function analyzePatterns(frame: TIMEFRAMES, start: number, end: number): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    queryDB('BTCUSDT', frame, start, end, (result: KLine[]) => {
+      let l = 14;
+      var trend = result[l].close-result[0].close < 0 ? "Down" : "Up";
+      var lock: string | boolean = false;
+      var lock_end: number = 0;
+      var tmp;
+      let peaks = {}, troughs = {};
+      for (var i = 1; i < result.length - l; i++) {
+        if (!lock) {
+          if (trend === "Up" && result[i+l].close-result[i].close < 0) {
+            lock = "high";
+            lock_end = i+l;
+            tmp = result[i];
+            trend = "Down";
+            if (i > 3) i -= 3;
+          } else if (trend === "Down" && result[i+l].close-result[i].close > 0) {
+            lock = "low";
+            lock_end = i+l;
+            tmp = result[i];
+            trend = "Up";
+            if (i > 3) i -= 3;
+          }
+        } else {
+          if (i == lock_end) {
+            console.log( "["+(lock == "high" ? tmp.high : tmp.low)+"] " + (lock == "high" ? "Peak @ " : "Trough @ ") + new Date(tmp.open_time).toLocaleString());
+            lock == "high" ? peaks[new Date(tmp.open_time).getTime()] = parseFloat(tmp.high) : troughs[new Date(tmp.open_time).getTime()] = parseFloat(tmp.low);
+            lock = false;
+          } else if ((lock === "low" && result[i].low < tmp.low) || (lock === "high" && (result[i].close > tmp.close || (result[i].high > tmp.high && result[i].close < result[i].open)))) {
+            tmp = result[i];
+            if (i+2 >= lock_end)
+              lock_end++;
+          }
+        }
+        // slope 14, flip slope -> lock endpoint, regress until lowest close.
+      }
+      resolve([peaks, troughs])
+    });
+  });
+
+}
+
+async function main() {
+  await candles.loadCandles(TIMEFRAMES["15m"], 1654732800000, 1655074800002);
+  
+  let tests: number[][] = generateTestCases(INDICATORS.RSI);
+  let ind = new INDICATORS.RSI.c(candles.getCandles);
+  let [peak, trough] = await analyzePatterns(TIMEFRAMES["15m"], 1654819200410, 1655074800002);
+  ind.reset(1654819200410, [TIMEFRAMES["15m"], ...tests[0]]);
+  for (const test of tests) {
+    //ind.reset(1654819200410, [TIMEFRAMES["15m"], ...test]);
+
+  }
+}
+
+main()
 
 /*
 async function tester<T extends _C_indicator>(i: INDICATOR<T>, start: number, end: number) {
@@ -194,7 +217,7 @@ async function tester<T extends _C_indicator>(i: INDICATOR<T>, start: number, en
 
 console.log("un un un");
 
-analyzePatterns(TIMEFRAMES["15m"], 1654819200410, 1655074800002)
+
 
 
 /*
