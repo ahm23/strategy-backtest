@@ -35,7 +35,7 @@ export class rsi implements _C_indicator {
   private frame: TIMEFRAMES;
   private time: number = new Date().getTime();
 
-  private cache: number[][] = [];
+  private cache: number[][];
 
   constructor(public getKline: (frame: TIMEFRAMES, start: number, end: number) => KLine[], args?: number[]) {
     if (args) this.setParameters(args);
@@ -73,6 +73,7 @@ export class rsi implements _C_indicator {
 
   reset(start: number, args: number[]) {
     const pre = 50;
+    this.cache = [];
     this.setParameters(args);
     this.time = start - start%this.frame;
     start = start - (pre+this.length)*this.frame;

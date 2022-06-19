@@ -4,6 +4,14 @@ import { KLine, KLineCollection, RESULT, TIMEFRAMES } from "./types";
 import { ARG, _T_ARGS, _T_COMPARE, _T_BOUND, _T_POSITION } from "./types";
 import { floor_tf } from "./utilities";
 
+interface data_set {
+  data: number[],
+  refined: number[],
+  mean: number,
+  precision: number,    // False = Outside of 1.5 IQR
+  std: number
+}
+
 
 interface INDICATOR_LIST {
   [k: string]: INDICATOR<_C_indicator>;
@@ -21,7 +29,7 @@ const INDICATORS: INDICATOR_LIST = {
   RSI: {
     c: rsi,
     args: [
-      {type: _T_ARGS.num_p_nz, b_l: 7, b_u: 50}
+      {type: _T_ARGS.num_p_nz, b_l: 3, b_u: 300}
     ],
     compare: _T_COMPARE.value,
     max: 100,
@@ -159,52 +167,70 @@ function eliminateOutliers(data: number[]): number[] {
   let r_dat: number[] = [];
   for (const d of data)
     if (d > Q1-1.5*(Q3-Q1) && d < Q3+1.5*(Q3-Q1)) r_dat.push(d);
-    else console.log(d);
+    //else console.log(d);
   return r_dat;
+}
+
+function stdDeviation(data: number[]) {
+  const mean = data.reduce((acc,v,i,a)=>(acc+v/a.length),0);
+  let deviation = 0;
+  for (const d of data) deviation += (d-mean)**2;
+  return (deviation / (data.length-1))**(1/2);
 }
 
 
 async function main() {
-  await candles.loadCandles(TIMEFRAMES["15m"], 1654041600000, 1655074800002);
+  await candles.loadCandles(TIMEFRAMES["15m"], 1651363200000, 1654041600000);
   
-  let start = 1654819200410 - 1654819200410%TIMEFRAMES["15m"];
-  let end = 1655074800002 - 1655074800002%TIMEFRAMES["15m"];
+  let start = 1651881600000;
+  let end = 1654041600000;
   let count = (end - start)/TIMEFRAMES["15m"];
 
   let tests: number[][] = generateTestCases(INDICATORS.RSI);
   let ind = new INDICATORS.RSI.c(candles.getCandles);
-  let [peak, trough] = await analyzePatterns(TIMEFRAMES["15m"], 1654819200410, 1655074800002);
-  ind.reset(1654819200410, [TIMEFRAMES["15m"], ...tests[0]]);
+  let [peak, trough] = await analyzePatterns(TIMEFRAMES["15m"], start, end);
+  //ind.reset(1654819200410, [TIMEFRAMES["15m"], ...tests[0]]);
 
-  let vals_l: number[] = [];
-  let vals_s: number[] = [];
 
-  for (var i = start; i < end; i += TIMEFRAMES["15m"]) {
-    if (i in peak) {
-      let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
-      candle.close = candle.high;
-      vals_s.push(ind.computeNext(true, candle));
-    } else if (i in trough) {
-      let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
-      candle.close = candle.low;
-      vals_l.push(ind.computeNext(true, candle));
-    }
-    ind.computeNext(false);
-  }
 
-  let vals_l_clean = eliminateOutliers(vals_l);
-  let vals_s_clean = eliminateOutliers(vals_s);
-  const precision_l = vals_l_clean.length / vals_l.length;
-  const precision_s = vals_s_clean.length / vals_s.length;
 
-  console.log(precision_l*100, precision_s*100);
   
   //console.log(vals_l, vals_s)
 
   //console.log(ind.getCache()) Debug RSI Values [in case I mess with the math]
-
+  
   for (const test of tests) {
-    //ind.reset(1654819200410, [TIMEFRAMES["15m"], ...test]);
+    ind.reset(start, [TIMEFRAMES["15m"], ...test]);
+    let vals_l: data_set = {data: [] as number[]} as data_set;
+    let vals_s: data_set = {data: [] as number[]} as data_set;
+  
+    for (var i = start; i < end; i += TIMEFRAMES["15m"]) {
+      if (i in peak) {
+        let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+        candle.close = candle.high;
+        vals_s.data.push(ind.computeNext(true, candle));
+      } else if (i in trough) {
+        let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+        candle.close = candle.low;
+        vals_l.data.push(ind.computeNext(true, candle));
+      }
+      ind.computeNext(false);
+    }
+  
+    [vals_l.refined, vals_s.refined] = [eliminateOutliers(vals_l.data), eliminateOutliers(vals_s.data)];
+    [vals_l.precision, vals_s.precision] = [vals_l.refined.length / vals_l.data.length, vals_s.refined.length / vals_s.data.length];
+    [vals_l.std, vals_s.std] = [stdDeviation(vals_l.refined), stdDeviation(vals_s.refined)];
+    [vals_l.mean, vals_s.mean] = [vals_l.refined.reduce((acc,v,i,a)=>(acc+v/a.length),0), vals_s.refined.reduce((acc,v,i,a)=>(acc+v/a.length),0)]
+    
+    if (vals_l.mean - vals_l.std > vals_s.mean + vals_s.std || vals_l.mean + vals_l.std < vals_s.mean - vals_s.std) {
+      console.log("\n-------------- RSI Parameters [" + test.join(',') + "] -----------------");
+      console.log("RSI Average  : ", "[LONG] ", vals_l.mean, "[SHORT] ", vals_s.mean);
+      console.log("IQR Precision: ", "[LONG] ", vals_l.precision*100, "[SHORT] ", vals_s.precision*100);
+      console.log("STD Deviation: ", "[LONG] ", vals_l.std, "[SHORT] ", vals_s.std);
+    } else {
+      console.log("\n----------- RSI Parameters [" + test.join(',') + "] INVALID --------------");
+    }
+    
 
   }
 }
