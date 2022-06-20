@@ -34,10 +34,11 @@ export class rsi implements _C_indicator {
   private candle: KLine[];
   private frame: TIMEFRAMES;
   private time: number = new Date().getTime();
+  private busy: boolean = false;
 
   private cache: number[][];
 
-  constructor(public getKline: (frame: TIMEFRAMES, start: number, end: number) => KLine[], args?: number[]) {
+  constructor(public getKline: (frame: TIMEFRAMES, start: number, end: number) => Promise<KLine[]>, args?: number[]) {
     if (args) this.setParameters(args);
   }
 
@@ -50,34 +51,36 @@ export class rsi implements _C_indicator {
     
   }
 
-  computeNext(theory: boolean, data?: KLine) {
-    let MA_U = this.MA_U, MA_D = this.MA_D;
-    if (data) {
-      MA_U = (MA_U*(this.length-1)+(data.close > data.open ? data.close/data.open - 1 : 0))/this.length;
-      MA_D = (MA_D*(this.length-1)+(data.close < data.open ? 1 - data.close/data.open : 0))/this.length;
-    } else {
-      if (this.cache.length) this.time += this.frame;
-      let result = this.getKline(this.frame, this.time, this.time)[0];
-      MA_U = (MA_U*(this.length-1)+(result.close > result.open ? result.close/result.open - 1 : 0))/this.length;
-      MA_D = (MA_D*(this.length-1)+(result.close < result.open ? 1 - result.close/result.open : 0))/this.length;
-      if (theory && this.cache.length > 1) this.time -= this.frame;
-    }
-    let rsi = MA_D == 0 ? 0 : 100 - 100/(1+MA_U/MA_D);
-    if (!theory) {
-      this.MA_U = MA_U;
-      this.MA_D = MA_D;
-      this.cache.push([this.time, rsi]);
-    }
-    return rsi;
+  computeNext(theory: boolean, data?: KLine): number {
+      if (this.isBusy()) throw 0;
+      let MA_U = this.MA_U, MA_D = this.MA_D;
+      if (data) {
+        MA_U = (MA_U*(this.length-1)+(data.close > data.open ? data.close/data.open - 1 : 0))/this.length;
+        MA_D = (MA_D*(this.length-1)+(data.close < data.open ? 1 - data.close/data.open : 0))/this.length;
+      } else {
+        if (this.cache.length) this.time += this.frame;
+        let result = this.getKline(this.frame, this.time, this.time)[0];
+        MA_U = (MA_U*(this.length-1)+(result.close > result.open ? result.close/result.open - 1 : 0))/this.length;
+        MA_D = (MA_D*(this.length-1)+(result.close < result.open ? 1 - result.close/result.open : 0))/this.length;
+        if (theory && this.cache.length > 1) this.time -= this.frame;
+      }
+      let rsi: number = MA_D == 0 ? 0 : 100 - 100/(1+MA_U/MA_D);
+      if (!theory) {
+        this.MA_U = MA_U;
+        this.MA_D = MA_D;
+        this.cache.push([this.time, rsi]);
+      }
+      return rsi;
   }
 
   reset(start: number, args: number[]) {
+    this.busy = true;
     const pre = 50;
     this.cache = [];
     this.setParameters(args);
     this.time = start - start%this.frame;
     start = start - (pre+this.length)*this.frame;
-    let result = this.getKline(this.frame, start, this.time);
+    let result = this.getKline(this.frame, start, this.time)
     for (var i = 0; i < this.length; i++) {
       if (result[i].close > result[i].open) this.MA_U += result[i].close/result[i].open - 1;
       else this.MA_D += 1 - result[i].close/result[i].open;
@@ -88,8 +91,10 @@ export class rsi implements _C_indicator {
       this.MA_U = (this.MA_U*(this.length-1)+(result[i].close > result[i].open ? result[i].close/result[i].open - 1 : 0))/this.length;
       this.MA_D = (this.MA_D*(this.length-1)+(result[i].close < result[i].open ? 1 - result[i].close/result[i].open : 0))/this.length;
     }
+    this.busy = false;
   }
 
+  isBusy = () => this.busy;
   getCache = () => this.cache;
 }
 

@@ -47,32 +47,79 @@ const INDICATORS: INDICATOR_LIST = {
   }
 }
 
+function waitfor(test, expectedValue, msec, count, source, callback) {
+  // Check if condition met. If not, re-check later (msec).
+  while (test() !== expectedValue) {
+      count++;
+      setTimeout(function() {
+          waitfor(test, expectedValue, msec, count, source, callback);
+      }, msec);
+      return;
+  }
+  // Condition finally met. callback() can be executed.
+  console.log(source + ': ' + test() + ', expected: ' + expectedValue + ', ' + count + ' loops.');
+  callback();
+}
+
 class CandleManager {
   private loading: boolean = false;
   candles: KLineCollection = {};
   private s: number = 0;
   private e: number = 0;
+  //private lowest: number = new Date().getTime();
+  //private highest: number = new Date().getTime();
 
   constructor(private symbol: string) {
 
   }
 
   async loadCandles(frame: TIMEFRAMES, start: number, end: number) {
+    console.log("STATUS | Loading Candles from T:", start, "to T:", end);
     this.loading = true;
+    if (!this.candles[frame]) {
+      this.candles[frame] = {
+        lowest: new Date().getTime(),
+        highest: new Date().getTime()
+      }
+    }
     start = floor_tf(frame, start); end = floor_tf(frame, end);
     let raw: KLine[] = await queryDB(this.symbol, frame, start, end);
-    for (const candle of raw) this.candles[candle.open_time] = candle;
+    if (raw[0].open_time < this.candles[frame].lowest) this.candles[frame].lowest = raw[0].open_time;
+    if (raw[raw.length - 1].open_time > this.candles[frame].highest) this.candles[frame].highest = raw[raw.length - 1].open_time;
+    for (const candle of raw) { this.candles[frame][candle.open_time] = candle; };
     this.loading = false;
-    //console.log(this.candles)
   }
 
   getCandles = (frame: TIMEFRAMES, start: number, end: number): KLine[] => {
-    //console.log(this.candles)
     let collector: KLine[] = [];
     start -= start%frame; end -= end%frame;
     for (var i = 0; i <= (end - start)/frame; i++) {
-      if (this.candles[start+i*frame])
-        collector.push(this.candles[start+i*frame]);
+      if (this.candles[frame][start+i*frame])
+        collector.push(this.candles[frame][start+i*frame]);
+      else {
+        if (this.candles[frame].lowest > start) {
+          this.loadCandles(frame, start, this.candles[frame].lowest);
+          this.candles[frame].lowest = start;
+        } else if (this.candles[frame].highest < end) {
+          this.loadCandles(frame, this.candles[frame].highest, end);
+          this.candles[frame].highest = end;
+        } else {
+          this.loadCandles(frame, start+i*frame, start+i*frame);
+        }
+        for(;this.loading == true;) {}
+        if (this.candles[frame][start+i*frame])
+          collector.push(this.candles[frame][start+i*frame]);
+        else {
+          const p = this.candles[frame][start+(i-1)*frame] || null;
+          console.warn("WARN | Missing Candle Data @ T:", start+i*frame);     // system would get choked upon mass missing candles, but that's ok.
+          collector.push({ open_time: start+i*frame,
+            close_time: start+(i+1)*frame - 1,
+            open: p.close || 0,
+            close: p.close || 0,
+            high: p.close || 0,
+            low: p.close || 0} as KLine);
+        }
+      }
     }
     return collector;
   }
@@ -205,16 +252,21 @@ async function main() {
     let vals_s: data_set = {data: [] as number[]} as data_set;
   
     for (var i = start; i < end; i += TIMEFRAMES["15m"]) {
-      if (i in peak) {
-        let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
-        candle.close = candle.high;
-        vals_s.data.push(ind.computeNext(true, candle));
-      } else if (i in trough) {
-        let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
-        candle.close = candle.low;
-        vals_l.data.push(ind.computeNext(true, candle));
+      try {
+        if (i in peak) {
+          let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+          candle.close = candle.high;
+          vals_s.data.push(ind.computeNext(true, candle));
+        } else if (i in trough) {
+          let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+          candle.close = candle.low;
+          vals_l.data.push(ind.computeNext(true, candle));
+        }
+        ind.computeNext(false);
+      } catch (e) {
+        i -= TIMEFRAMES["15m"]
+        //await new Promise(r => setTimeout(r, 1)); 
       }
-      ind.computeNext(false);
     }
   
     [vals_l.refined, vals_s.refined] = [eliminateOutliers(vals_l.data), eliminateOutliers(vals_s.data)];

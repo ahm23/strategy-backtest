@@ -21,7 +21,11 @@ export interface KLine {
 }
 
 export interface KLineCollection {
-  [k: number]: KLine
+  [x: number]: {
+    highest: number,
+    lowest: number,
+    [k: number]: KLine
+  }
 }
 
 export enum _T_ARGS {
