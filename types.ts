@@ -66,3 +66,20 @@ export interface RESULT {
   std: number
   accuracy: number
 }
+
+
+export interface ANALYSIS {
+  b_data: number[],
+  s_data: number[],
+  params: number[],
+  refined: number[],
+  b_mean: number,
+  s_mean: number,
+  precision: number,    // False = Outside of 1.5 IQR
+  std: number
+}
+
+export interface POSITION {
+  type: string | null,
+  entry: number,
+}

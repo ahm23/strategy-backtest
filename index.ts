@@ -1,17 +1,26 @@
+import { text } from "stream/consumers";
+import { backtest } from "./backtest";
 import { queryDB } from "./db";
 import { srsi, rsi, _C_indicator } from "./indicators";
 import { KLine, KLineCollection, RESULT, TIMEFRAMES } from "./types";
 import { ARG, _T_ARGS, _T_COMPARE, _T_BOUND, _T_POSITION } from "./types";
 import { floor_tf } from "./utilities";
 
-interface data_set {
+interface data_analysis {
   data: number[],
+  params: number[],
   refined: number[],
   mean: number,
   precision: number,    // False = Outside of 1.5 IQR
   std: number
 }
 
+interface data_wrap {
+  long: data_analysis[],
+  short: data_analysis[],
+  long_stdMean: number,
+  short_stdMean: number
+}
 
 interface INDICATOR_LIST {
   [k: string]: INDICATOR<_C_indicator>;
@@ -29,13 +38,13 @@ const INDICATORS: INDICATOR_LIST = {
   RSI: {
     c: rsi,
     args: [
-      {type: _T_ARGS.num_p_nz, b_l: 3, b_u: 300}
+      {type: _T_ARGS.num_p_nz, b_l: 3, b_u: 200}
     ],
     compare: _T_COMPARE.value,
     max: 100,
     min: 0
   },
-  SRSI: {
+ /* SRSI: {
     c: rsi,
     args: [
       {type: _T_ARGS.num_p_nz, b_l: 1, b_u: 25},
@@ -44,8 +53,15 @@ const INDICATORS: INDICATOR_LIST = {
     compare: _T_COMPARE.value,
     max: 100,
     min: 0
-  }
+  }*/
 }
+
+interface confirmed {
+  c: new (...args: any[]) => any;
+  analysis: data_analysis;
+}
+
+var long: confirmed[] = [], short: confirmed[] = [];
 
 function waitfor(test, expectedValue, msec, count, source, callback) {
   // Check if condition met. If not, re-check later (msec).
@@ -60,6 +76,7 @@ function waitfor(test, expectedValue, msec, count, source, callback) {
   console.log(source + ': ' + test() + ', expected: ' + expectedValue + ', ' + count + ' loops.');
   callback();
 }
+
 
 class CandleManager {
   private loading: boolean = false;
@@ -91,7 +108,7 @@ class CandleManager {
   }
 
   getCandles = (frame: TIMEFRAMES, start: number, end: number): KLine[] => {
-    let collector: KLine[] = [];
+    var collector: KLine[] = [];
     start -= start%frame; end -= end%frame;
     for (var i = 0; i <= (end - start)/frame; i++) {
       if (this.candles[frame][start+i*frame])
@@ -128,6 +145,7 @@ class CandleManager {
   }
 }
 
+var candles = new CandleManager("BTCUSDT");
 
 function getArgIncrement(type: _T_ARGS): number {
   switch (type) {
@@ -156,8 +174,6 @@ function generateTestCases<T extends _C_indicator>(indicator: INDICATOR<T>): num
   cases = generateArgCases(0, indicator.args, []);
   return cases;
 }
-
-var candles = new CandleManager("BTCUSDT");
 
 function analyzePatterns(frame: TIMEFRAMES, start: number, end: number): Promise<any[]> {
   return new Promise((resolve, reject) => {
@@ -234,7 +250,7 @@ async function main() {
   let count = (end - start)/TIMEFRAMES["15m"];
 
   let tests: number[][] = generateTestCases(INDICATORS.RSI);
-  let ind = new INDICATORS.RSI.c(candles.getCandles);
+  //let ind = new INDICATORS.RSI.c(candles.getCandles);
   let [peak, trough] = await analyzePatterns(TIMEFRAMES["15m"], start, end);
   //ind.reset(1654819200410, [TIMEFRAMES["15m"], ...tests[0]]);
 
@@ -246,48 +262,105 @@ async function main() {
 
   //console.log(ind.getCache()) Debug RSI Values [in case I mess with the math]
   
-  for (const test of tests) {
-    ind.reset(start, [TIMEFRAMES["15m"], ...test]);
-    let vals_l: data_set = {data: [] as number[]} as data_set;
-    let vals_s: data_set = {data: [] as number[]} as data_set;
-  
-    for (var i = start; i < end; i += TIMEFRAMES["15m"]) {
-      try {
-        if (i in peak) {
-          let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
-          candle.close = candle.high;
-          vals_s.data.push(ind.computeNext(true, candle));
-        } else if (i in trough) {
-          let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
-          candle.close = candle.low;
-          vals_l.data.push(ind.computeNext(true, candle));
-        }
-        ind.computeNext(false);
-      } catch (e) {
-        i -= TIMEFRAMES["15m"]
-        //await new Promise(r => setTimeout(r, 1)); 
-      }
-    }
-  
-    [vals_l.refined, vals_s.refined] = [eliminateOutliers(vals_l.data), eliminateOutliers(vals_s.data)];
-    [vals_l.precision, vals_s.precision] = [vals_l.refined.length / vals_l.data.length, vals_s.refined.length / vals_s.data.length];
-    [vals_l.std, vals_s.std] = [stdDeviation(vals_l.refined), stdDeviation(vals_s.refined)];
-    [vals_l.mean, vals_s.mean] = [vals_l.refined.reduce((acc,v,i,a)=>(acc+v/a.length),0), vals_s.refined.reduce((acc,v,i,a)=>(acc+v/a.length),0)]
-    
-    if (vals_l.mean - vals_l.std > vals_s.mean + vals_s.std || vals_l.mean + vals_l.std < vals_s.mean - vals_s.std) {
-      console.log("\n-------------- RSI Parameters [" + test.join(',') + "] -----------------");
-      console.log("RSI Average  : ", "[LONG] ", vals_l.mean, "[SHORT] ", vals_s.mean);
-      console.log("IQR Precision: ", "[LONG] ", vals_l.precision*100, "[SHORT] ", vals_s.precision*100);
-      console.log("STD Deviation: ", "[LONG] ", vals_l.std, "[SHORT] ", vals_s.std);
-    } else {
-      console.log("\n----------- RSI Parameters [" + test.join(',') + "] INVALID --------------");
-    }
-    
+  let std_l: number[] = [];
+  let std_s: number[] = [];
 
+  let results: data_wrap[] = []
+
+  for (const indicator in INDICATORS) {
+    let x = INDICATORS[indicator];
+    const ind = new x.c(candles.getCandles);
+    let analysis: data_wrap = {} as data_wrap;
+    analysis.long = []; analysis.short = []
+    for (var j = 0; j < tests.length; j++) {
+      const test = tests[j];
+      ind.reset(start, [TIMEFRAMES["15m"], ...test]);
+      var vals_l: data_analysis = {data: [] as number[]} as data_analysis;
+      var vals_s: data_analysis = {data: [] as number[]} as data_analysis;
+      vals_l.params = test;
+      vals_s.params = test;
+      for (var i = start; i < end; i += TIMEFRAMES["15m"]) {
+        try {
+          if (i in peak) {
+            let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+            candle.close = candle.high;
+            vals_s.data.push(ind.computeNext(true, candle));
+          } else if (i in trough) {
+            let candle = candles.getCandles(TIMEFRAMES["15m"],i,i)[0];
+            candle.close = candle.low;
+            vals_l.data.push(ind.computeNext(true, candle));
+          }
+          //if (i == start + TIMEFRAMES["15m"]*80) console.log(ind.computeNext(true, candles.getCandles(TIMEFRAMES["15m"],i,i)[0]));
+          ind.computeNext(false);
+        } catch (e) {
+          i -= TIMEFRAMES["15m"]
+          console.log(e)
+          //await new Promise(r => setTimeout(r, 1)); 
+        }
+      }
+    
+      [vals_l.refined, vals_s.refined] = [eliminateOutliers(vals_l.data), eliminateOutliers(vals_s.data)];
+      [vals_l.precision, vals_s.precision] = [vals_l.refined.length / vals_l.data.length, vals_s.refined.length / vals_s.data.length];
+      [vals_l.std, vals_s.std] = [stdDeviation(vals_l.refined), stdDeviation(vals_s.refined)];
+      [vals_l.mean, vals_s.mean] = [vals_l.refined.reduce((acc,v,i,a)=>(acc+v/a.length),0), vals_s.refined.reduce((acc,v,i,a)=>(acc+v/a.length),0)]
+      
+      std_l.push(vals_l.std)
+      std_s.push(vals_s.std)
+
+      if (vals_l.mean - vals_l.std > vals_s.mean + vals_s.std || vals_l.mean + vals_l.std < vals_s.mean - vals_s.std) {
+        if (vals_l.precision >= 0.75 && vals_l.std <= 7.5) {           // !!!!! Correct this for 7.5% of max range or price
+          let subject: confirmed = {analysis: vals_l} as confirmed;
+          subject.c = x.c;
+          const backtest_indicator = new x.c(candles.getCandles);
+          backtest_indicator.reset(start, [TIMEFRAMES["15m"], ...test]);
+          const backtest_dat = candles.getCandles(TIMEFRAMES["15m"],start,end);
+          //console.log("\nBACKTEST | RSI " + test);
+          const b = backtest(backtest_indicator, backtest_dat, vals_l, 10);
+          analysis.long.push(vals_l)
+          console.log('\n------------\n')
+          console.log(b)
+        }
+        if (vals_s.precision >= 0.8)
+          analysis.short.push(vals_s)
+      }
+
+
+    }
+    
+    for (const testr of analysis.long) {
+      console.log("\n-------------- RSI Parameters [" + testr.params.join(',') + "] -----------------");
+      console.log("RSI Average  : ", "[LONG] ", testr.mean);
+      console.log("IQR Precision: ", "[LONG] ", testr.precision);
+      console.log("STD Deviation: ", "[LONG] ", testr.std);
+    }
+    // make this so only if bounded // -------------------
+    [analysis.long_stdMean, analysis.short_stdMean] = [analysis.long.reduce((acc,v,i,a)=>(acc+v.std/a.length),0), analysis.short.reduce((acc,v,i,a)=>(acc+v.std/a.length),0)];
+    analysis.long = analysis.long.filter(e => e.std <= analysis.long_stdMean);
+    analysis.short = analysis.short.filter(e => e.std <= analysis.long_stdMean);
+
+    results.push(analysis);
   }
+  
+
+
+  // debug
+/*
+  for (const test of analysis.short) {
+    console.log("\n-------------- RSI Parameters [" + test.params.join(',') + "] -----------------");
+    console.log("RSI Average  : ", "[SHORT] ", test.mean);
+    console.log("IQR Precision: ", "[SHORT] ", test.precision);
+    console.log("STD Deviation: ", "[SHORT] ", test.std);
+  }*/
+
+
+  // Start Initial Filtering (Single Indicator Accuracy > 50%)
+  
 }
 
+
 main()
+
+
 
 /*
 async function tester<T extends _C_indicator>(i: INDICATOR<T>, start: number, end: number) {
@@ -336,12 +409,7 @@ async function tester<T extends _C_indicator>(i: INDICATOR<T>, start: number, en
 }
 */
 
-
-
 console.log("un un un");
-
-
-
 
 /*
 function verify(time, price, position) {
@@ -379,7 +447,6 @@ function verify(time, price, position) {
   
   return null;
 }*/
-
 
 //test.loadCandles(TIMEFRAMES["15m"], 1654819200410, 1655074800002);
 
